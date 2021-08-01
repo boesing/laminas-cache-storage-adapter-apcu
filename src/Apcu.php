@@ -1,14 +1,14 @@
 <?php
 
+declare(strict_types=1);
+
 /**
  * @see       https://github.com/laminas/laminas-cache for the canonical source repository
- * @copyright https://github.com/laminas/laminas-cache/blob/master/COPYRIGHT.md
- * @license   https://github.com/laminas/laminas-cache/blob/master/LICENSE.md New BSD License
  */
 
 namespace Laminas\Cache\Storage\Adapter;
 
-use APCuIterator as BaseApcuIterator;
+use APCUIterator as BaseApcuIterator;
 use Laminas\Cache\Exception;
 use Laminas\Cache\Storage\AvailableSpaceCapableInterface;
 use Laminas\Cache\Storage\Capabilities;
@@ -19,6 +19,36 @@ use Laminas\Cache\Storage\IterableInterface;
 use Laminas\Cache\Storage\TotalSpaceCapableInterface;
 use stdClass;
 use Traversable;
+
+use function apcu_add;
+use function apcu_cas;
+use function apcu_clear_cache;
+use function apcu_dec;
+use function apcu_delete;
+use function apcu_exists;
+use function apcu_fetch;
+use function apcu_inc;
+use function apcu_sma_info;
+use function apcu_store;
+use function array_filter;
+use function array_keys;
+use function ceil;
+use function get_class;
+use function gettype;
+use function implode;
+use function ini_get;
+use function is_int;
+use function is_object;
+use function preg_quote;
+use function strlen;
+use function substr;
+
+use const APC_ITER_ALL;
+use const APC_ITER_REFCOUNT;
+use const APC_ITER_TYPE;
+use const APC_ITER_VALUE;
+use const APC_LIST_ACTIVE;
+use const PHP_SAPI;
 
 class Apcu extends AbstractAdapter implements
     AvailableSpaceCapableInterface,
@@ -43,10 +73,6 @@ class Apcu extends AbstractAdapter implements
      */
     public function __construct($options = null)
     {
-        if (version_compare(phpversion('apcu'), '5.1.0', '<')) {
-            throw new Exception\ExtensionNotLoadedException('Missing ext/apcu >= 5.1.0');
-        }
-
         if (! ini_get('apc.enabled') || (PHP_SAPI === 'cli' && ! ini_get('apc.enable_cli'))) {
             throw new Exception\ExtensionNotLoadedException(
                 "ext/apcu is disabled - see 'apc.enabled' and 'apc.enable_cli'"
@@ -61,9 +87,10 @@ class Apcu extends AbstractAdapter implements
     /**
      * Set options.
      *
+     * @see    getOptions()
+     *
      * @param  array|Traversable|ApcuOptions $options
      * @return Apcu
-     * @see    getOptions()
      */
     public function setOptions($options)
     {
@@ -77,8 +104,9 @@ class Apcu extends AbstractAdapter implements
     /**
      * Get options.
      *
-     * @return ApcuOptions
      * @see    setOptions()
+     *
+     * @return ApcuOptions
      */
     public function getOptions()
     {
@@ -98,7 +126,7 @@ class Apcu extends AbstractAdapter implements
     public function getTotalSpace()
     {
         if ($this->totalSpace === null) {
-            $smaInfo = apcu_sma_info(true);
+            $smaInfo          = apcu_sma_info(true);
             $this->totalSpace = $smaInfo['num_seg'] * $smaInfo['seg_size'];
         }
 
@@ -190,8 +218,8 @@ class Apcu extends AbstractAdapter implements
 
         $options   = $this->getOptions();
         $namespace = $options->getNamespace();
-        $nsPrefix  = ($namespace === '') ? '' : $namespace . $options->getNamespaceSeparator();
-        $pattern = '/^' . preg_quote($nsPrefix . $prefix, '/') . '/';
+        $nsPrefix  = $namespace === '' ? '' : $namespace . $options->getNamespaceSeparator();
+        $pattern   = '/^' . preg_quote($nsPrefix . $prefix, '/') . '/';
         return apcu_delete(new BaseApcuIterator($pattern, 0, 1, APC_LIST_ACTIVE));
     }
 
@@ -206,11 +234,11 @@ class Apcu extends AbstractAdapter implements
      * @return mixed Data on success, null on failure
      * @throws Exception\ExceptionInterface
      */
-    protected function internalGetItem(& $normalizedKey, & $success = null, & $casToken = null)
+    protected function internalGetItem(&$normalizedKey, &$success = null, &$casToken = null)
     {
         $options     = $this->getOptions();
         $namespace   = $options->getNamespace();
-        $prefix      = ($namespace === '') ? '' : $namespace . $options->getNamespaceSeparator();
+        $prefix      = $namespace === '' ? '' : $namespace . $options->getNamespaceSeparator();
         $internalKey = $prefix . $normalizedKey;
         $result      = apcu_fetch($internalKey, $success);
 
@@ -229,7 +257,7 @@ class Apcu extends AbstractAdapter implements
      * @return array Associative array of keys and values
      * @throws Exception\ExceptionInterface
      */
-    protected function internalGetItems(array & $normalizedKeys)
+    protected function internalGetItems(array &$normalizedKeys)
     {
         $options   = $this->getOptions();
         $namespace = $options->getNamespace();
@@ -262,11 +290,11 @@ class Apcu extends AbstractAdapter implements
      * @return bool
      * @throws Exception\ExceptionInterface
      */
-    protected function internalHasItem(& $normalizedKey)
+    protected function internalHasItem(&$normalizedKey)
     {
         $options   = $this->getOptions();
         $namespace = $options->getNamespace();
-        $prefix    = ($namespace === '') ? '' : $namespace . $options->getNamespaceSeparator();
+        $prefix    = $namespace === '' ? '' : $namespace . $options->getNamespaceSeparator();
         return apcu_exists($prefix . $normalizedKey);
     }
 
@@ -277,7 +305,7 @@ class Apcu extends AbstractAdapter implements
      * @return array Array of found keys
      * @throws Exception\ExceptionInterface
      */
-    protected function internalHasItems(array & $normalizedKeys)
+    protected function internalHasItems(array &$normalizedKeys)
     {
         $options   = $this->getOptions();
         $namespace = $options->getNamespace();
@@ -311,11 +339,11 @@ class Apcu extends AbstractAdapter implements
      * @return array|bool Metadata on success, false on failure
      * @throws Exception\ExceptionInterface
      */
-    protected function internalGetMetadata(& $normalizedKey)
+    protected function internalGetMetadata(&$normalizedKey)
     {
         $options     = $this->getOptions();
         $namespace   = $options->getNamespace();
-        $prefix      = ($namespace === '') ? '' : $namespace . $options->getNamespaceSeparator();
+        $prefix      = $namespace === '' ? '' : $namespace . $options->getNamespaceSeparator();
         $internalKey = $prefix . $normalizedKey;
 
         $format   = APC_ITER_ALL ^ APC_ITER_VALUE ^ APC_ITER_TYPE ^ APC_ITER_REFCOUNT;
@@ -336,12 +364,11 @@ class Apcu extends AbstractAdapter implements
      *
      * @param  array $normalizedKeys
      * @return array Associative array of keys and metadata
-     *
      * @triggers getMetadatas.pre(PreEvent)
      * @triggers getMetadatas.post(PostEvent)
      * @triggers getMetadatas.exception(ExceptionEvent)
      */
-    protected function internalGetMetadatas(array & $normalizedKeys)
+    protected function internalGetMetadatas(array &$normalizedKeys)
     {
         $keysRegExp = [];
         foreach ($normalizedKeys as $normalizedKey) {
@@ -360,9 +387,9 @@ class Apcu extends AbstractAdapter implements
             $pattern = '/^' . preg_quote($prefix, '/') . '(' . implode('|', $keysRegExp) . ')' . '$/';
         }
 
-        $format  = APC_ITER_ALL ^ APC_ITER_VALUE ^ APC_ITER_TYPE ^ APC_ITER_REFCOUNT;
-        $it      = new BaseApcuIterator($pattern, $format, 100, APC_LIST_ACTIVE);
-        $result  = [];
+        $format = APC_ITER_ALL ^ APC_ITER_VALUE ^ APC_ITER_TYPE ^ APC_ITER_REFCOUNT;
+        $it     = new BaseApcuIterator($pattern, $format, 100, APC_LIST_ACTIVE);
+        $result = [];
         foreach ($it as $internalKey => $metadata) {
             $this->normalizeMetadata($metadata);
             $result[substr($internalKey, $prefixL)] = $metadata;
@@ -381,13 +408,13 @@ class Apcu extends AbstractAdapter implements
      * @return bool
      * @throws Exception\ExceptionInterface
      */
-    protected function internalSetItem(& $normalizedKey, & $value)
+    protected function internalSetItem(&$normalizedKey, &$value)
     {
         $options     = $this->getOptions();
         $namespace   = $options->getNamespace();
-        $prefix      = ($namespace === '') ? '' : $namespace . $options->getNamespaceSeparator();
+        $prefix      = $namespace === '' ? '' : $namespace . $options->getNamespaceSeparator();
         $internalKey = $prefix . $normalizedKey;
-        $ttl         = $options->getTtl();
+        $ttl         = (int) ceil($options->getTtl());
 
         if (! apcu_store($internalKey, $value, $ttl)) {
             $type = is_object($value) ? get_class($value) : gettype($value);
@@ -406,22 +433,22 @@ class Apcu extends AbstractAdapter implements
      * @return array Array of not stored keys
      * @throws Exception\ExceptionInterface
      */
-    protected function internalSetItems(array & $normalizedKeyValuePairs)
+    protected function internalSetItems(array &$normalizedKeyValuePairs)
     {
         $options   = $this->getOptions();
         $namespace = $options->getNamespace();
         if ($namespace === '') {
-            return array_keys(apcu_store($normalizedKeyValuePairs, null, $options->getTtl()));
+            return array_keys(apcu_store($normalizedKeyValuePairs, null, (int) ceil($options->getTtl())));
         }
 
         $prefix                = $namespace . $options->getNamespaceSeparator();
         $internalKeyValuePairs = [];
         foreach ($normalizedKeyValuePairs as $normalizedKey => $value) {
-            $internalKey = $prefix . $normalizedKey;
+            $internalKey                         = $prefix . $normalizedKey;
             $internalKeyValuePairs[$internalKey] = $value;
         }
 
-        $failedKeys = apcu_store($internalKeyValuePairs, null, $options->getTtl());
+        $failedKeys = apcu_store($internalKeyValuePairs, null, (int) ceil($options->getTtl()));
         $failedKeys = array_keys($failedKeys);
 
         // remove prefix
@@ -441,13 +468,13 @@ class Apcu extends AbstractAdapter implements
      * @return bool
      * @throws Exception\ExceptionInterface
      */
-    protected function internalAddItem(& $normalizedKey, & $value)
+    protected function internalAddItem(&$normalizedKey, &$value)
     {
         $options     = $this->getOptions();
         $namespace   = $options->getNamespace();
-        $prefix      = ($namespace === '') ? '' : $namespace . $options->getNamespaceSeparator();
+        $prefix      = $namespace === '' ? '' : $namespace . $options->getNamespaceSeparator();
         $internalKey = $prefix . $normalizedKey;
-        $ttl         = $options->getTtl();
+        $ttl         = (int) ceil($options->getTtl());
 
         if (! apcu_add($internalKey, $value, $ttl)) {
             if (apcu_exists($internalKey)) {
@@ -470,22 +497,22 @@ class Apcu extends AbstractAdapter implements
      * @return array Array of not stored keys
      * @throws Exception\ExceptionInterface
      */
-    protected function internalAddItems(array & $normalizedKeyValuePairs)
+    protected function internalAddItems(array &$normalizedKeyValuePairs)
     {
         $options   = $this->getOptions();
         $namespace = $options->getNamespace();
         if ($namespace === '') {
-            return array_keys(apcu_add($normalizedKeyValuePairs, null, $options->getTtl()));
+            return array_keys(apcu_add($normalizedKeyValuePairs, null, (int) ceil($options->getTtl())));
         }
 
         $prefix                = $namespace . $options->getNamespaceSeparator();
         $internalKeyValuePairs = [];
         foreach ($normalizedKeyValuePairs as $normalizedKey => $value) {
-            $internalKey = $prefix . $normalizedKey;
+            $internalKey                         = $prefix . $normalizedKey;
             $internalKeyValuePairs[$internalKey] = $value;
         }
 
-        $failedKeys = apcu_add($internalKeyValuePairs, null, $options->getTtl());
+        $failedKeys = apcu_add($internalKeyValuePairs, null, (int) ceil($options->getTtl()));
         $failedKeys = array_keys($failedKeys);
 
         // remove prefix
@@ -505,14 +532,13 @@ class Apcu extends AbstractAdapter implements
      * @return bool
      * @throws Exception\ExceptionInterface
      */
-    protected function internalReplaceItem(& $normalizedKey, & $value)
+    protected function internalReplaceItem(&$normalizedKey, &$value)
     {
         $options     = $this->getOptions();
-        $ttl         = $options->getTtl();
+        $ttl         = (int) ceil($options->getTtl());
         $namespace   = $options->getNamespace();
-        $prefix      = ($namespace === '') ? '' : $namespace . $options->getNamespaceSeparator();
+        $prefix      = $namespace === '' ? '' : $namespace . $options->getNamespaceSeparator();
         $internalKey = $prefix . $normalizedKey;
-
 
         if (! apcu_exists($internalKey)) {
             return false;
@@ -531,14 +557,15 @@ class Apcu extends AbstractAdapter implements
     /**
      * Internal method to set an item only if token matches
      *
+     * @see    getItem()
+     * @see    setItem()
+     *
      * @param  mixed  $token
      * @param  string $normalizedKey
      * @param  mixed  $value
      * @return bool
-     * @see    getItem()
-     * @see    setItem()
      */
-    protected function internalCheckAndSetItem(& $token, & $normalizedKey, & $value)
+    protected function internalCheckAndSetItem(&$token, &$normalizedKey, &$value)
     {
         if (is_int($token) && is_int($value)) {
             return apcu_cas($normalizedKey, $token, $value);
@@ -554,11 +581,11 @@ class Apcu extends AbstractAdapter implements
      * @return bool
      * @throws Exception\ExceptionInterface
      */
-    protected function internalRemoveItem(& $normalizedKey)
+    protected function internalRemoveItem(&$normalizedKey)
     {
         $options   = $this->getOptions();
         $namespace = $options->getNamespace();
-        $prefix    = ($namespace === '') ? '' : $namespace . $options->getNamespaceSeparator();
+        $prefix    = $namespace === '' ? '' : $namespace . $options->getNamespaceSeparator();
         return apcu_delete($prefix . $normalizedKey);
     }
 
@@ -569,7 +596,7 @@ class Apcu extends AbstractAdapter implements
      * @return array Array of not removed keys
      * @throws Exception\ExceptionInterface
      */
-    protected function internalRemoveItems(array & $normalizedKeys)
+    protected function internalRemoveItems(array &$normalizedKeys)
     {
         $options   = $this->getOptions();
         $namespace = $options->getNamespace();
@@ -602,18 +629,18 @@ class Apcu extends AbstractAdapter implements
      * @return int|bool The new value on success, false on failure
      * @throws Exception\ExceptionInterface
      */
-    protected function internalIncrementItem(& $normalizedKey, & $value)
+    protected function internalIncrementItem(&$normalizedKey, &$value)
     {
         $options     = $this->getOptions();
         $namespace   = $options->getNamespace();
-        $prefix      = ($namespace === '') ? '' : $namespace . $options->getNamespaceSeparator();
+        $prefix      = $namespace === '' ? '' : $namespace . $options->getNamespaceSeparator();
         $internalKey = $prefix . $normalizedKey;
         $value       = (int) $value;
         $newValue    = apcu_inc($internalKey, $value);
 
         // initial value
         if ($newValue === false) {
-            $ttl      = $options->getTtl();
+            $ttl      = (int) ceil($options->getTtl());
             $newValue = $value;
             if (! apcu_add($internalKey, $newValue, $ttl)) {
                 throw new Exception\RuntimeException(
@@ -633,18 +660,18 @@ class Apcu extends AbstractAdapter implements
      * @return int|bool The new value on success, false on failure
      * @throws Exception\ExceptionInterface
      */
-    protected function internalDecrementItem(& $normalizedKey, & $value)
+    protected function internalDecrementItem(&$normalizedKey, &$value)
     {
         $options     = $this->getOptions();
         $namespace   = $options->getNamespace();
-        $prefix      = ($namespace === '') ? '' : $namespace . $options->getNamespaceSeparator();
+        $prefix      = $namespace === '' ? '' : $namespace . $options->getNamespaceSeparator();
         $internalKey = $prefix . $normalizedKey;
         $value       = (int) $value;
         $newValue    = apcu_dec($internalKey, $value);
 
         // initial value
         if ($newValue === false) {
-            $ttl      = $options->getTtl();
+            $ttl      = (int) ceil($options->getTtl());
             $newValue = -$value;
             if (! apcu_add($internalKey, $newValue, $ttl)) {
                 throw new Exception\RuntimeException(
@@ -681,10 +708,15 @@ class Apcu extends AbstractAdapter implements
                         'object'   => 'object',
                         'resource' => false,
                     ],
-                    'supportedMetadata' => [
+                    'supportedMetadata'  => [
                         'internal_key',
-                        'atime', 'ctime', 'mtime', 'rtime',
-                        'size', 'hits', 'ttl',
+                        'atime',
+                        'ctime',
+                        'mtime',
+                        'rtime',
+                        'size',
+                        'hits',
+                        'ttl',
                     ],
                     'minTtl'             => 1,
                     'maxTtl'             => 0,
@@ -721,10 +753,10 @@ class Apcu extends AbstractAdapter implements
      * @param  array $metadata
      * @return void
      */
-    protected function normalizeMetadata(array & $metadata)
+    protected function normalizeMetadata(array &$metadata)
     {
         $apcMetadata = $metadata;
-        $metadata = [
+        $metadata    = [
             'internal_key' => $metadata['key'],
             'atime'        => $metadata['access_time'],
             'ctime'        => $metadata['creation_time'],
